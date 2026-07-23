@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: resonance-bot
+    runtime: python
+    plan: starter
+    buildCommand: ""
+    startCommand: python3 server.py
+    healthCheckPath: /healthz
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false   # Render will prompt for this in the dashboard - keeps the key out of git
+      - key: RATE_LIMIT
+        value: "120"
+      - key: ANALYZE_MODEL
+        value: gemini-3-flash-preview
+      - key: RENDER_MODEL
+        value: gemini-3.1-pro-preview
+      - key: GENERIC_MODEL
+        value: gemini-2.5-flash

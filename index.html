@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resonance Engine — MVP</title>
+<style>
+  :root{
+    --bg:#0e1014; --panel:#151923; --panel2:#1b212e; --border:#272f3f;
+    --text:#dfe4ee; --muted:#8a94a8; --accent:#6ea8fe;
+    --user:#274a7c; --engine:#1e2532; --ghost:#14171f;
+    --green:#3fb97a; --red:#e05f5f; --amber:#d9a441;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  header{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:baseline;gap:12px}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  header span{color:var(--muted);font-size:12px}
+  main{flex:1;display:flex;min-height:0}
+
+  /* ---------- left: chat ---------- */
+  #chat{width:57%;display:flex;flex-direction:column;border-right:1px solid var(--border);min-width:0}
+  #controls{display:flex;align-items:center;gap:14px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+  #controls label{color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px}
+  select,button{background:var(--panel2);color:var(--text);border:1px solid var(--border);
+                border-radius:6px;padding:5px 10px;font:inherit;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  #resetBtn{margin-left:auto}
+  #thread{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:78%;padding:9px 13px;border-radius:12px;white-space:pre-wrap;word-wrap:break-word}
+  .msg.user{align-self:flex-end;background:var(--user);border-bottom-right-radius:3px}
+  .msg.engine{align-self:flex-start;background:var(--engine);border:1px solid var(--border);border-bottom-left-radius:3px}
+  .msg.error{align-self:flex-start;background:#3a1d1d;border:1px solid var(--red);color:#f0b0b0}
+  .generic{align-self:flex-start;max-width:78%;background:var(--ghost);border:1px dashed #333c4e;
+           border-radius:10px;padding:7px 11px;opacity:.75}
+  .generic .glabel{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+  .generic .gbody{color:#aab2c4;white-space:pre-wrap;font-style:italic}
+  .chips{align-self:flex-start;display:flex;flex-wrap:wrap;gap:7px;max-width:85%}
+  .chip{background:var(--panel2);border:1px solid var(--accent);color:var(--accent);
+        border-radius:999px;padding:5px 13px;cursor:pointer;font-size:13px}
+  .chip:hover{background:#22304a}
+  .chip:disabled{border-color:var(--border);color:var(--muted);cursor:default;opacity:.55}
+  .chip:disabled:hover{background:var(--panel2)}
+  .thinking{color:var(--muted);font-style:italic;animation:pulse 1.2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+  #starters{display:flex;gap:8px;flex-wrap:wrap;padding:8px 14px 0}
+  #starters .chip{border-color:#3a445a;color:var(--muted)}
+  #starters .chip:hover{color:var(--accent);border-color:var(--accent)}
+  #inputRow{display:flex;gap:8px;padding:12px 14px}
+  #msgInput{flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:8px;
+            color:var(--text);padding:9px 12px;font:inherit;outline:none}
+  #msgInput:focus{border-color:var(--accent)}
+  #msgInput:disabled{opacity:.5}
+  #sendBtn{background:var(--accent);color:#0b1526;border-color:var(--accent);font-weight:600}
+  #sendBtn:disabled{opacity:.5;cursor:default}
+
+  /* ---------- right: debug ---------- */
+  #debug{width:43%;overflow-y:auto;padding:14px 16px;background:var(--panel);min-width:0}
+  #debug h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);
+            margin:18px 0 8px;border-bottom:1px solid var(--border);padding-bottom:4px}
+  #debug h2:first-child{margin-top:0}
+  .kv{display:flex;gap:8px;padding:2px 0;font-size:13px}
+  .kv .k{color:var(--muted);min-width:110px;flex-shrink:0}
+  .kv .v{word-break:break-word}
+  .badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;border:1px solid var(--border);color:var(--muted)}
+  .badge.open{background:#232a38}
+  .badge.leading,.badge.confirmed{background:#153526;color:var(--green);border-color:var(--green)}
+  .badge.rejected{background:#3a1d1d;color:var(--red);border-color:var(--red)}
+  .hyp{border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px;background:var(--panel2)}
+  .hyp.rejected{opacity:.6}
+  .hyp.rejected .hlabel{text-decoration:line-through}
+  .hrow{display:flex;align-items:center;gap:8px}
+  .hid{color:var(--muted);font-size:12px;min-width:28px}
+  .hlabel{flex:1;font-size:13px;min-width:0}
+  .bar{width:90px;height:8px;background:#0d1118;border-radius:4px;overflow:hidden;flex-shrink:0}
+  .bar>div{height:100%;background:var(--accent)}
+  .pct{font-size:11px;color:var(--muted);width:36px;text-align:right;flex-shrink:0}
+  .hyp details{margin-top:6px;font-size:12px;color:var(--muted)}
+  .hyp summary{cursor:pointer;color:var(--muted)}
+  .hyp details .kv .k{min-width:130px}
+  .ev{font-size:12px;padding:5px 8px;border-left:2px solid var(--border);margin-bottom:5px;color:#b9c1d1}
+  .ev .emeta{color:var(--muted);margin-right:6px}
+  .empty{color:var(--muted);font-size:12px;font-style:italic}
+  #validationRow.warn .v{color:var(--amber)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Resonance Engine</h1><span>MVP &middot; A/B vs generic bot</span>
+</header>
+<main>
+  <section id="chat">
+    <div id="controls">
+      <label>tone
+        <select id="toneSel">
+          <option value="gentle" selected>gentle</option>
+          <option value="direct">direct</option>
+          <option value="blunt">blunt</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="compareChk" checked> compare with generic bot</label>
+      <button id="resetBtn">Reset</button>
+    </div>
+    <div id="thread"></div>
+    <div id="starters"></div>
+    <div id="inputRow">
+      <input id="msgInput" type="text" placeholder="Type a message…" autocomplete="off">
+      <button id="sendBtn">Send</button>
+    </div>
+  </section>
+
+  <aside id="debug">
+    <h2>Engine internals</h2>
+    <div class="kv"><span class="k">state</span><span class="v" id="dState">—</span></div>
+    <div class="kv"><span class="k">act</span><span class="v" id="dAct">—</span></div>
+    <div class="kv"><span class="k">turn</span><span class="v" id="dTurn">—</span></div>
+    <div class="kv"><span class="k">forks asked</span><span class="v" id="dForks">—</span></div>
+    <div class="kv"><span class="k">reaction</span><span class="v" id="dReaction">—</span></div>
+    <div class="kv"><span class="k">reaction note</span><span class="v" id="dReactionNote">—</span></div>
+    <div class="kv" id="validationRow" style="display:none"><span class="k">validation</span><span class="v" id="dValidation"></span></div>
+
+    <h2>Hypotheses</h2>
+    <div id="dHyps"><div class="empty">none yet</div></div>
+
+    <h2>Episode model</h2>
+    <div id="dEpisode"><div class="empty">none yet</div></div>
+
+    <h2>Evidence ledger</h2>
+    <div id="dEvidence"><div class="empty">none yet</div></div>
+  </aside>
+</main>
+
+<script>
+"use strict";
+const SID = (window.crypto && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : "s-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+
+const thread    = document.getElementById("thread");
+const msgInput  = document.getElementById("msgInput");
+const sendBtn   = document.getElementById("sendBtn");
+const toneSel   = document.getElementById("toneSel");
+const compareChk= document.getElementById("compareChk");
+const resetBtn  = document.getElementById("resetBtn");
+const starters  = document.getElementById("starters");
+
+const STARTER_TEXTS = [
+  "When will I get married?",
+  "Will he come back to me?",
+  "Should I quit my job?",
+  "Why do I feel stuck in life?"
+];
+
+let inFlight = false;
+let latestChips = null;   // chips container of the most recent engine reply
+
+// ---------------------------------------------------------------- helpers
+
+function el(tag, cls, text){
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = text;
+  return e;
+}
+
+// API base: same-origin when served by server.py (local/Railway/Render);
+// hardcoded backend when served as a static page (Vercel).
+const API_BASE = (() => {
+  const h = location.hostname;
+  if (h === "localhost" || h === "127.0.0.1" || h.endsWith("onrender.com") || h.endsWith("up.railway.app")) return "";
+  return "https://resonance-bot.onrender.com"; // static hosting (Vercel) -> Render backend
+})();
+
+async function post(path, body){
+  const r = await fetch(API_BASE + path, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body)
+  });
+  if (!r.ok){
+    let detail = "";
+    try { detail = await r.text(); } catch (_) {}
+    throw new Error(path + " -> HTTP " + r.status + (detail ? ": " + detail.slice(0, 200) : ""));
+  }
+  return r.json();
+}
+
+function scrollDown(){ thread.scrollTop = thread.scrollHeight; }
+
+function addBubble(role, text){
+  const b = el("div", "msg " + role, text);
+  thread.appendChild(b);
+  scrollDown();
+  return b;
+}
+
+function setBusy(busy){
+  inFlight = busy;
+  msgInput.disabled = busy;
+  sendBtn.disabled = busy;
+  if (!busy) msgInput.focus();
+}
+
+function disableChips(container){
+  container.querySelectorAll("button").forEach(b => { b.disabled = true; });
+}
+
+// ---------------------------------------------------------------- chat flow
+
+function makeGenericBox(){
+  const box = el("div", "generic");
+  box.appendChild(el("div", "glabel", "generic bot (control)"));
+  const body = el("div", "gbody thinking", "thinking…");
+  box.appendChild(body);
+  return {box, body};
+}
+
+function renderChips(options){
+  const wrap = el("div", "chips");
+  options.forEach(opt => {
+    const c = el("button", "chip", opt.label);
+    c.addEventListener("click", () => {
+      if (inFlight) return;
+      wrap.style.display = "none";          // hide chips for this message once clicked
+      if (latestChips === wrap) latestChips = null;
+      sendMessage(opt.label, {label: opt.label, kind: opt.kind, hyp_id: opt.hyp_id || null});
+    });
+    wrap.appendChild(c);
+  });
+  thread.appendChild(wrap);
+  latestChips = wrap;
+  scrollDown();
+}
+
+async function sendMessage(text, option){
+  text = (text || "").trim();
+  if (!text || inFlight) return;
+  msgInput.value = "";
+  setBusy(true);
+  if (latestChips){ disableChips(latestChips); latestChips = null; }
+
+  addBubble("user", text);
+  const engineBubble = addBubble("engine", "");
+  engineBubble.appendChild(el("span", "thinking", "thinking…"));
+
+  const compare = compareChk.checked;
+  let gen = null;
+  if (compare){
+    gen = makeGenericBox();
+    thread.appendChild(gen.box);
+    scrollDown();
+  }
+
+  const chatP = post("/chat", {
+    session_id: SID, message: text, tone: toneSel.value, option: option || null
+  });
+  const genP = compare
+    ? post("/generic", {session_id: SID, message: text})
+    : null;
+
+  chatP.then(data => {
+    engineBubble.textContent = data.reply || "";
+    if (Array.isArray(data.options) && data.options.length) renderChips(data.options);
+    if (data.debug) updateDebug(data.debug);
+    scrollDown();
+  }).catch(err => {
+    engineBubble.className = "msg error";
+    engineBubble.textContent = "engine error: " + err.message;
+    scrollDown();
+  });
+
+  if (genP){
+    genP.then(data => {
+      gen.body.className = "gbody";
+      gen.body.textContent = data.generic || "";
+    }).catch(err => {
+      gen.body.className = "gbody";
+      gen.body.textContent = "(generic bot error: " + err.message + ")";
+    });
+  }
+
+  Promise.allSettled(genP ? [chatP, genP] : [chatP]).then(() => setBusy(false));
+}
+
+// ---------------------------------------------------------------- debug panel
+
+const H_DETAIL_KEYS = ["latent_question","appraisal","emotion","needs","threats","tension",
+                       "strategy","reward","cost","threatened_identity","status","confidence"];
+
+function fmtVal(v){
+  if (Array.isArray(v)) return v.join(", ");
+  if (typeof v === "number") return String(Math.round(v * 1000) / 1000);
+  return String(v);
+}
+
+function badgeClass(status){
+  if (status === "rejected") return "badge rejected";
+  if (status === "confirmed" || status === "leading") return "badge " + status;
+  return "badge open";
+}
+
+function renderHypotheses(list){
+  const box = document.getElementById("dHyps");
+  box.textContent = "";
+  const hyps = (list || []).slice().sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+  if (!hyps.length){ box.appendChild(el("div", "empty", "none yet")); return; }
+  hyps.forEach(h => {
+    const status = h.status || "open";
+    const conf = Math.max(0, Math.min(1, h.confidence == null ? 0 : h.confidence));
+    const card = el("div", "hyp" + (status === "rejected" ? " rejected" : ""));
+
+    const row = el("div", "hrow");
+    row.appendChild(el("span", "hid", h.id || "?"));
+    row.appendChild(el("span", "hlabel", h.fork_label || h.latent_question || "(unnamed)"));
+    const bar = el("div", "bar");
+    const fill = el("div");
+    fill.style.width = (conf * 100).toFixed(1) + "%";
+    bar.appendChild(fill);
+    row.appendChild(bar);
+    row.appendChild(el("span", "pct", Math.round(conf * 100) + "%"));
+    row.appendChild(el("span", badgeClass(status), status));
+    card.appendChild(row);
+
+    const det = el("details");
+    det.appendChild(el("summary", null, "details"));
+    H_DETAIL_KEYS.forEach(k => {
+      const v = h[k];
+      if (v === undefined || v === null || v === "" || (Array.isArray(v) && !v.length)) return;
+      const kv = el("div", "kv");
+      kv.appendChild(el("span", "k", k.replace(/_/g, " ")));
+      kv.appendChild(el("span", "v", fmtVal(v)));
+      det.appendChild(kv);
+    });
+    card.appendChild(det);
+    box.appendChild(card);
+  });
+}
+
+function renderEpisode(ep){
+  const box = document.getElementById("dEpisode");
+  box.textContent = "";
+  const keys = Object.keys(ep || {}).filter(k => {
+    const v = ep[k];
+    return v !== "" && v !== null && v !== undefined && !(Array.isArray(v) && !v.length);
+  });
+  if (!keys.length){ box.appendChild(el("div", "empty", "none yet")); return; }
+  keys.forEach(k => {
+    const kv = el("div", "kv");
+    kv.appendChild(el("span", "k", k.replace(/_/g, " ")));
+    kv.appendChild(el("span", "v", fmtVal(ep[k])));
+    box.appendChild(kv);
+  });
+}
+
+function renderEvidence(list){
+  const box = document.getElementById("dEvidence");
+  box.textContent = "";
+  if (!list || !list.length){ box.appendChild(el("div", "empty", "none yet")); return; }
+  list.forEach(e => {
+    const row = el("div", "ev");
+    row.appendChild(el("span", "emeta", (e.id || "?") + " · " + (e.type || "?")));
+    row.appendChild(document.createTextNode(e.content || ""));
+    box.appendChild(row);
+  });
+}
+
+function setText(id, v){ document.getElementById(id).textContent = (v === undefined || v === null || v === "") ? "—" : String(v); }
+
+function updateDebug(d){
+  setText("dState", d.state);
+  setText("dAct", d.act);
+  setText("dTurn", d.turn);
+  setText("dForks", d.forks_asked);
+  setText("dReaction", d.reaction);
+  setText("dReactionNote", d.reaction_note);
+  const vrow = document.getElementById("validationRow");
+  if (d.validation){
+    vrow.style.display = "";
+    vrow.classList.add("warn");
+    setText("dValidation", d.validation);
+  } else {
+    vrow.style.display = "none";
+  }
+  renderHypotheses(d.hypotheses);
+  renderEpisode(d.episode);
+  renderEvidence(d.evidence);
+}
+
+function clearDebug(){
+  ["dState","dAct","dTurn","dForks","dReaction","dReactionNote"].forEach(id => setText(id, null));
+  document.getElementById("validationRow").style.display = "none";
+  renderHypotheses([]);
+  renderEpisode({});
+  renderEvidence([]);
+}
+
+// ---------------------------------------------------------------- wiring
+
+STARTER_TEXTS.forEach(t => {
+  const c = el("button", "chip", t);
+  c.addEventListener("click", () => sendMessage(t, null));
+  starters.appendChild(c);
+});
+
+sendBtn.addEventListener("click", () => sendMessage(msgInput.value, null));
+msgInput.addEventListener("keydown", e => {
+  if (e.key === "Enter"){ e.preventDefault(); sendMessage(msgInput.value, null); }
+});
+
+resetBtn.addEventListener("click", async () => {
+  if (inFlight) return;
+  setBusy(true);
+  try { await post("/reset", {session_id: SID}); } catch (_) {}
+  thread.textContent = "";
+  latestChips = null;
+  clearDebug();
+  setBusy(false);
+});
+
+msgInput.focus();
+</script>
+</body>
+</html>
