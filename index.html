@@ -170,7 +170,7 @@ function el(tag, cls, text){
 const API_BASE = (() => {
   const h = location.hostname;
   if (h === "localhost" || h === "127.0.0.1" || h.endsWith("onrender.com") || h.endsWith("up.railway.app")) return "";
-  return "https://resonance-bot.onrender.com"; // static hosting (Vercel) -> Render backend
+  return "https://resonance-bot-m7l0.onrender.com"; // static hosting (Vercel) -> Render backend
 })();
 
 async function post(path, body){
