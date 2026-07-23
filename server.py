@@ -22,17 +22,21 @@ from pathlib import Path
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
 ANALYZE_MODEL = os.environ.get("ANALYZE_MODEL", "gemini-3-flash-preview")
-RENDER_MODEL = os.environ.get("RENDER_MODEL", "gemini-3.1-pro-preview")
+RENDER_MODEL = os.environ.get("RENDER_MODEL", "gemini-3-flash-preview")
 GENERIC_MODEL = os.environ.get("GENERIC_MODEL", "gemini-2.5-flash")
+THINKING_BUDGET = int(os.environ.get("THINKING_BUDGET", "0"))  # 0 = no thinking, low latency
+ANALYZE_THINKING = int(os.environ.get("ANALYZE_THINKING", str(THINKING_BUDGET)))
+RENDER_THINKING = int(os.environ.get("RENDER_THINKING", str(THINKING_BUDGET)))
 PORT = int(os.environ.get("PORT", "8420"))
 BASE = Path(__file__).parent
 
 # ---------------------------------------------------------------- LLM client
 
-def gemini(model, prompt, json_mode=True, temperature=0.7, retries=2):
+def gemini(model, prompt, json_mode=True, temperature=0.7, retries=2, thinking=0):
     body = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": temperature},
+        "generationConfig": {"temperature": temperature,
+                             "thinkingConfig": {"thinkingBudget": thinking}},
     }
     if json_mode:
         body["generationConfig"]["responseMimeType"] = "application/json"
@@ -106,7 +110,9 @@ OUTPUT exactly this JSON shape:
   "hypotheses": [
     {{"id": "H1", "latent_question": "", "appraisal": "", "emotion": [""], "needs": [""], "threats": [""],
       "tension": "", "strategy": "", "reward": "", "cost": "", "threatened_identity": "",
-      "fork_label": "4-7 word distinguishing concern", "status": "open"}}
+      "fork_label": "4-7 word distinguishing concern",
+      "sub_forks": ["2-3 deeper fork labels to offer if THIS hypothesis is picked next"],
+      "status": "open"}}
   ]
 }}
 
@@ -122,7 +128,7 @@ RULES
    - strategy: an observable behaviour (comparison, reassurance seeking, withdrawal, overanalysis, people pleasing, delaying commitment, checking).
    - reward / cost: concrete short-term payoff and delayed price of that strategy.
    - threatened_identity: a self-belief in the user's voice, e.g. "someone whose life is on track", "someone who is chosen", "someone who makes good decisions".
-7. DRILL DOWN after a selection: once the user picks a fork, the next fork_labels must separate sub-readings of the SELECTED hypothesis, not repeat the old split. Example: after "waiting longer than expected" is picked, the next fork separates its sources: "my own timeline", "family pressure", "watching others move ahead".
+7. DRILL DOWN after a selection: once the user picks a fork, the next fork_labels must separate sub-readings of the SELECTED hypothesis, not repeat the old split. Example: after "waiting longer than expected" is picked, the next fork separates its sources: "my own timeline", "family pressure", "watching others move ahead". For the same reason, ALWAYS fill sub_forks for every hypothesis: 2-3 concrete deeper concerns specific to that hypothesis, so the engine can fork again without re-analysis. Never reuse labels from ALREADY-OFFERED lists in either field.
 8. episode: fill only fields supported by evidence; keep prior values unless contradicted; empty string if unknown.
 9. new_evidence: only facts from THIS message. If the message is pure agreement/selection, return []. supports/contradicts reference hypothesis ids. Never emit evidence of type user_selected_option - the engine logs selections itself.
 """
@@ -199,6 +205,7 @@ class Session:
         self.last_fork_hyps = []
         self.taken_fork_labels = []   # labels already shown, never re-offer
         self.agency_count = 0
+        self.pending_forks = []       # precomputed drill-down chips [{label, hyp_id}]
 
     def open_hyps(self):
         return sorted([h for h in self.hypotheses if h.get("status") == "open"],
@@ -248,13 +255,13 @@ def analyze(s, message):
         prompt += ("\nALREADY-OFFERED fork labels (the user has seen these; never reuse or reword them - "
                    "new fork_labels must be genuinely deeper or different): "
                    + json.dumps(s.taken_fork_labels[-12:], ensure_ascii=False) + "\n")
-    raw = gemini(ANALYZE_MODEL, prompt, json_mode=True, temperature=0.4)
+    raw = gemini(ANALYZE_MODEL, prompt, json_mode=True, temperature=0.4, thinking=ANALYZE_THINKING)
     data = parse_json(raw) or {}
     hyps = [h for h in (data.get("hypotheses") or []) if h.get("status") != "rejected"]
     if len(hyps) < 2 and len(s.open_hyps()) < 2:
         # hypothesis generation collapsed; demand the competition the doc requires
         raw = gemini(ANALYZE_MODEL, prompt + "\nIMPORTANT: you returned fewer than 2 hypotheses. Return 3-4 COMPETING hypotheses with different threats/needs, all fields specific.\n",
-                     json_mode=True, temperature=0.5)
+                     json_mode=True, temperature=0.5, thinking=ANALYZE_THINKING)
         data = parse_json(raw) or data
     return data
 
@@ -439,13 +446,17 @@ def render(s, act, top, tone, retry_note=""):
 
     plan = {"user_said_recently": [t for r, t in s.history[-4:] if r == "user"]}
     if act == "differentiate":
-        plan["fork_labels"] = [{"hyp_id": h["id"], "label": h.get("fork_label") or h.get("latent_question", "")}
-                               for h in hyps[:3]]
+        if s.pending_forks:
+            forks = s.pending_forks[:3]
+        else:
+            forks = [{"hyp_id": h["id"], "label": h.get("fork_label") or h.get("latent_question", "")}
+                     for h in hyps[:3]]
+        plan["fork_labels"] = forks
         plan["surface_question"] = s.episode.get("surface_question", "")
         plan["forbidden_repeat_labels"] = s.taken_fork_labels[-12:]
         plan["split_context"] = ("The user said the last interpretation was only PARTLY right - "
                                  "fork to find which part was off.") if s.last_reaction == "partial_confirmation" else ""
-        s.last_fork_hyps = [h["id"] for h in hyps[:3]]
+        s.last_fork_hyps = [f["hyp_id"] for f in forks]
     elif act == "mirror":
         plan["top_hypothesis"] = {k: top.get(k) for k in
                                   ("latent_question", "appraisal", "emotion", "needs", "threats", "strategy")} if top else {}
@@ -478,7 +489,7 @@ def render(s, act, top, tone, retry_note=""):
     )
     if retry_note:
         prompt += f"\nPREVIOUS ATTEMPT FAILED VALIDATION: {retry_note}. Fix it.\n"
-    raw = gemini(RENDER_MODEL, prompt, json_mode=True, temperature=0.75)
+    raw = gemini(RENDER_MODEL, prompt, json_mode=True, temperature=0.75, thinking=RENDER_THINKING)
     return parse_json(raw) or {}
 
 
@@ -551,20 +562,29 @@ def handle_chat(sid, message, tone="gentle", option=None):
         if kind == "hypothesis_choice":
             apply_selection(s, option.get("hyp_id"), shown_ids, weight=0.15)
             s.last_reaction = "elaboration"
-            # re-analyze so the next fork drills down into the selected hypothesis
-            saved_opts, s.last_options = s.last_options, []
-            try:
-                data = analyze(s, f'The user selected this option: "{display}"')
-                data["new_evidence"] = []  # selection itself was already logged in code
-                data["reaction"] = "elaboration"  # a selection is differentiation, not confirmation
-                for h in (data.get("hypotheses") or []):
-                    if h.get("status") == "rejected":
-                        h["status"] = "open"  # picking one fork rejects nothing; code demotes
-                apply_analysis(s, data)
-                s.last_reaction = "elaboration"
-            except Exception as e:  # noqa: BLE001
-                s.validation_note = f"analyze_error: {e}"
-            s.last_options = saved_opts
+            # narrow the selected hypothesis in place
+            parent = next((h for h in s.hypotheses if h["id"] == option.get("hyp_id")), None)
+            if parent is not None:
+                parent["fork_label"] = display
+            subs = [x for x in ((parent or {}).get("sub_forks") or []) if x]
+            if parent is not None and len(subs) >= 2:
+                # instant drill-down: use precomputed sub-forks, skip re-analysis entirely
+                s.pending_forks = [{"label": x, "hyp_id": parent["id"]} for x in subs[:3]]
+            else:
+                s.pending_forks = []
+                saved_opts, s.last_options = s.last_options, []
+                try:
+                    data = analyze(s, f'The user selected this option: "{display}"')
+                    data["new_evidence"] = []  # selection itself was already logged in code
+                    data["reaction"] = "elaboration"  # a selection is differentiation, not confirmation
+                    for h in (data.get("hypotheses") or []):
+                        if h.get("status") == "rejected":
+                            h["status"] = "open"  # picking one fork rejects nothing; code demotes
+                    apply_analysis(s, data)
+                    s.last_reaction = "elaboration"
+                except Exception as e:  # noqa: BLE001
+                    s.validation_note = f"analyze_error: {e}"
+                s.last_options = saved_opts
         else:  # reaction chip
             lab = (option.get("label") or "").lower()
             top = s.open_hyps()[0] if s.open_hyps() else None
@@ -580,6 +600,7 @@ def handle_chat(sid, message, tone="gentle", option=None):
                     top["status"] = "rejected"
     else:
         display = message
+        s.pending_forks = []  # free text: fresh analysis, forget precomputed forks
         try:
             data = analyze(s, message)
             apply_analysis(s, data)
@@ -652,7 +673,7 @@ def handle_generic(sid, message):
     hist = "\n".join(f"{r}: {t}" for r, t in s.generic_history[-10:])
     prompt = GENERIC_PROMPT.format(history=hist or "(none)", message=message)
     try:
-        reply = gemini(GENERIC_MODEL, prompt, json_mode=False, temperature=0.8)
+        reply = gemini(GENERIC_MODEL, prompt, json_mode=False, temperature=0.8, thinking=0)
     except Exception as e:  # noqa: BLE001
         reply = f"(generic bot error: {e})"
     s.generic_history.append(("user", message))
